@@ -101,26 +101,27 @@ jobs:
       - name: Make Defconfig
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc9/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          unset AS
           make O=out ARCH=arm64 SUBARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            CC=clang \
+            CC=clang AS=clang \
             ${{ github.event.inputs.defconfig }}
-          make O=out ARCH=arm64 SUBARCH=arm64 CC=clang olddefconfig
+          make O=out ARCH=arm64 SUBARCH=arm64 CC=clang AS=clang olddefconfig
 
       - name: Disable Debug Options
         if: ${{ env.DISABLE_DEBUG == 'true' }}
         run: |
           chmod +x scripts/config
           scripts/config --file out/.config --disable DEBUG_INFO
-          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
+          make O=out ARCH=arm64 SUBARCH=arm64 CC=clang AS=clang olddefconfig
 
       - name: Enable Experimental Options
         if: ${{ env.ENABLE_EXPERIMENTAL == 'true' }}
         run: |
           chmod +x scripts/config
           scripts/config --file out/.config --enable DEBUG_FS
-          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
+          make O=out ARCH=arm64 SUBARCH=arm64 CC=clang AS=clang olddefconfig
 
       - name: Compile Kernel
         run: |
@@ -147,6 +148,7 @@ jobs:
           nice -n10 make O=out \
             ARCH=arm64 SUBARCH=arm64 \
             CC=clang \
+            AS=clang \
             LD=ld.lld \
             AR=llvm-ar \
             NM=llvm-nm \
