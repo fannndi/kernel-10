@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: "Kernel Name"
         required: true
-        default: "MIUI-A12-NOS"
+        default: "MIUI-A10-LOS"
       defconfig:
         description: "Defconfig"
         required: true
@@ -23,9 +23,11 @@ on:
 env:
   BUILD_USER: fannndi
   BUILD_HOST: github
+  HOSTCC: gcc-9
+  HOSTCXX: g++-9
+  CLANG_TRIPLE: aarch64-linux-gnu-
   ARCH: arm64
   SUBARCH: arm64
-  CLANG_TRIPLE: aarch64-linux-gnu-
 
 jobs:
   build:
@@ -61,86 +63,94 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
-            gcc-9 g++-9 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            bc binutils build-essential cmake curl git \
-            kmod libelf-dev libssl-dev libncurses5-dev libncursesw5-dev \
-            lzop python-is-python3 rsync unzip xz-utils zip cpio \
-            lz4 device-tree-compiler libxml2-utils abootimg \
-            android-sdk-libsparse-utils make ninja-build zstd \
-            libzstd-dev libfdt-dev gettext libudev-dev
+            clang llvm gcc-9 g++-9 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            abootimg android-sdk-libsparse-utils bc binutils bison build-essential \
+            ccache cmake cpio curl device-tree-compiler flex gettext git jq kmod \
+            libelf-dev libfdt-dev liblz4-tool libncurses5-dev libncursesw5-dev \
+            libssl-dev libudev-dev libxml2-utils libzstd-dev lsb-release lz4 \
+            lzop make nano ninja-build openssl patchutils pigz protobuf-compiler \
+            python-is-python3 python3 python3-mako python3-pip python3-virtualenv \
+            rsync unzip wget xz-utils zip zstd
 
-      - name: Install Bison 3.0.5 & Flex 2.6.4
+      - name: Download Clang
         run: |
-          mkdir -p tools && cd tools
-          wget https://ftp.gnu.org/gnu/bison/bison-3.0.5.tar.gz
-          tar -xf bison-3.0.5.tar.gz && cd bison-3.0.5
-          ./configure --prefix=$HOME/.local && make -j$(nproc) && make install
-          cd ..
-          wget https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
-          tar -xf flex-2.6.4.tar.gz && cd flex-2.6.4
-          ./configure --prefix=$HOME/.local && make -j$(nproc) && make install
-          cd ..
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          echo "LD_LIBRARY_PATH=$HOME/.local/lib:$HOME/.local/lib64" >> $GITHUB_ENV
-          unset BISON_PKGDATADIR
-
-      - name: Download Clang r536225
-        run: |
-          mkdir -p clang
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz -O - | tar -xz -C clang
+          if [[ ! -f "clang/bin/clang" ]]; then
+            mkdir -p clang
+            wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android14-release/clang-r487747c.tar.gz -O - | tar -xz -C clang
+          fi
           echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
           echo "TOOLCHAIN_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
 
       - name: Show Clang Version
-        run: clang/bin/clang --version
+        id: clang_version
+        run: echo "version=$(clang/bin/clang --version | head -n1)" >> $GITHUB_OUTPUT
 
-      - name: Download GCC 9.3 (aarch64)
+      - name: Download GCC 9.3 Toolchain (aarch64)
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 gcc64
-          echo "$GITHUB_WORKSPACE/gcc64/bin" >> $GITHUB_PATH
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 gcc9
+          echo "$GITHUB_WORKSPACE/gcc9/bin" >> $GITHUB_PATH
 
-      - name: Download GCC 4.9 (arm32)
+      - name: Download GCC 4.9 Toolchain (arm-linux)
         run: |
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc32
           echo "$GITHUB_WORKSPACE/gcc32/bin" >> $GITHUB_PATH
 
-      - name: Clean Output
+      - name: Clean Output Directory
         run: rm -rf out dtb.img Image.gz-dtb AnyKernel3 *.zip log.txt || true
 
-      - name: Generate Defconfig
+      - name: Make Defconfig
         run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc9/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           make O=out ARCH=arm64 SUBARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            CC=clang ${{ github.event.inputs.defconfig }}
+            CC=clang \
+            ${{ github.event.inputs.defconfig }}
           make O=out ARCH=arm64 SUBARCH=arm64 CC=clang olddefconfig
 
-      - name: Apply Debug & Experimental Options
+      - name: Disable Debug Options
+        if: ${{ env.DISABLE_DEBUG == 'true' }}
         run: |
           chmod +x scripts/config
-          if [[ "${{ env.DISABLE_DEBUG }}" == "true" ]]; then
-            scripts/config --file out/.config --disable DEBUG_INFO
-          fi
-          if [[ "${{ env.ENABLE_EXPERIMENTAL }}" == "true" ]]; then
-            scripts/config --file out/.config --enable DEBUG_FS
-          fi
-          make O=out ARCH=arm64 SUBARCH=arm64 CC=clang olddefconfig
+          scripts/config --file out/.config --disable DEBUG_INFO
+          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
+
+      - name: Enable Experimental Options
+        if: ${{ env.ENABLE_EXPERIMENTAL == 'true' }}
+        run: |
+          chmod +x scripts/config
+          scripts/config --file out/.config --enable DEBUG_FS
+          make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
+
+      - name: Patch DTC yylloc Conflict
+        run: |
+          echo 'HOSTCFLAGS_dtc-parser.tab.o += -DYYLTYPE_IS_DECLARED=1' >> scripts/dtc/Makefile
+          cd scripts/dtc
+          rm -f dtc-lexer.lex.c
+          flex -o dtc-lexer.lex.c dtc-lexer.l
 
       - name: Compile Kernel
         run: |
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          # Set PATH ke toolchain
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc9/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          # Export toolchain & metadata
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-androideabi-
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n1)"
-          export KBUILD_BUILD_USER=$BUILD_USER
-          export KBUILD_BUILD_HOST=$BUILD_HOST
+          export KBUILD_COMPILER_STRING="$($GITHUB_WORKSPACE/clang/bin/clang --version | head -n1)"
+          export KBUILD_BUILD_USER="${BUILD_USER}"
+          export KBUILD_BUILD_HOST="${BUILD_HOST}"
+          unset AS
 
+          # CPU core & parallelism
           JOBS=$(nproc --ignore=1)
           export MAKEFLAGS="-j$JOBS -Oline"
 
+          # Logging
           echo "🔧 Using Clang: $KBUILD_COMPILER_STRING"
           echo "🧱 Starting Kernel Build at $(date)"
 
+          # Compile kernel
           nice -n10 make O=out \
             ARCH=arm64 SUBARCH=arm64 \
             CC=clang \
@@ -155,12 +165,14 @@ jobs:
             KBUILD_VERBOSE=2 V=1 \
             Image.gz-dtb 2>&1 | tee log.txt
 
+          echo "✅ Kernel Build Completed at $(date)"
+
       - name: Save Final .config Snapshot
         run: cp out/.config defconfig_snapshot.config
 
-      - name: Generate Kernel Image
+      - name: Create Kernel Images
         run: |
-          cat out/arch/arm64/boot/Image.gz out/arch/arm64/boot/dts/**/*.dtb > Image.gz-dtb || true
+          cat out/arch/arm64/boot/Image.gz out/arch/arm64/boot/dts/**/*.dtb > Image.gz-dtb
           find out/arch/arm64/boot/dts -name '*.dtb' | sort | xargs cat > dtb.img || true
 
       - name: Package with AnyKernel3
@@ -169,7 +181,7 @@ jobs:
           cp Image.gz-dtb dtb.img AnyKernel3/ 2>/dev/null || true
           cd AnyKernel3 && zip -r9 ../${{ env.ZIPNAME }} . -x '*.git*' README.md *placeholder
 
-      - name: Upload Build Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ env.BUILD_ID }}
@@ -179,7 +191,7 @@ jobs:
             defconfig_snapshot.config
             ${{ env.ZIPNAME }}
 
-      - name: Final Build Info
+      - name: Show Final Info
         if: success()
         run: |
           echo "✅ Build Finished!"
