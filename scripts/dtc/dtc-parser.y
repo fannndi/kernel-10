@@ -24,6 +24,15 @@
 #include "dtc.h"
 #include "srcpos.h"
 
+#define YYLTYPE IS DECLARED 1
+#define YYLTYPE IS TRIVIAL 1
+typedef struct YYLTYPE {
+  int first_line;
+  int first_column;
+  int last_line;
+  int last_column;
+} YYLTYPE;
+
 extern int yylex(void);
 extern void yyerror(char const *s);
 #define ERROR(loc, ...) \
