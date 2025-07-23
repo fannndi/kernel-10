@@ -100,6 +100,23 @@ jobs:
     - name: Clean Output Directory
       run: rm -rf out dtb.img Image.gz-dtb AnyKernel3 *.zip log.txt || true
 
+    - name: Patch DTC yylloc Conflict (Early)
+      run: |
+        echo "⚙️ Patching DTC yylloc conflict if not patched yet..."
+        PATCH_MARKER="// yylloc patched"
+        DTC_LEX=scripts/dtc/dtc-lexer.l
+
+        # Tambahkan #define YYLTYPE_IS_DECLARED jika belum ada
+        grep -q 'YYLTYPE_IS_DECLARED' scripts/dtc/Makefile || \
+          echo 'HOSTCFLAGS_dtc-parser.tab.o += -DYYLTYPE_IS_DECLARED=1' >> scripts/dtc/Makefile
+
+        # Patch yylloc redefinition di lexer jika belum
+        grep -q "$PATCH_MARKER" "$DTC_LEX" || \
+          sed -i "1i $PATCH_MARKER\n#define YYLTYPE_IS_DECLARED 1\n#define YYLTYPE yyltype\nextern YYLTYPE yylloc;" "$DTC_LEX"
+
+        # Regenerate lexer file
+        cd scripts/dtc && flex -o dtc-lexer.lex.c dtc-lexer.l && cd ../../
+
     - name: Make Defconfig
       run: |
         export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc9/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
@@ -123,14 +140,6 @@ jobs:
         chmod +x scripts/config
         scripts/config --file out/.config --enable DEBUG_FS
         make O=out ARCH=arm64 SUBARCH=arm64 olddefconfig
-
-    - name: Patch DTC yylloc Conflict
-      run: |
-        grep -q 'YYLTYPE_IS_DECLARED' scripts/dtc/Makefile || \
-          echo 'HOSTCFLAGS_dtc-parser.tab.o += -DYYLTYPE_IS_DECLARED=1' >> scripts/dtc/Makefile
-        cd scripts/dtc
-        rm -f dtc-lexer.lex.c
-        flex -o dtc-lexer.lex.c dtc-lexer.l
 
     - name: Compile Kernel
       run: |
